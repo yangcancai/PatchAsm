@@ -1,2 +1,5 @@
 /target
 .DS_Store
+*.o
+patch-foo/csrc/add
+patch-foo/csrc/inject

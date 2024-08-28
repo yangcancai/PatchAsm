@@ -6,7 +6,7 @@ use mach2::message::mach_msg_type_number_t;
 use mach2::port::{mach_port_name_t, mach_port_t};
 use mach2::task::{task_resume, task_suspend};
 use mach2::traps::{mach_task_self, task_for_pid};
-use mach2::vm::{mach_vm_protect, mach_vm_region, mach_vm_write};
+use mach2::vm::{mach_vm_protect, mach_vm_read_overwrite, mach_vm_region, mach_vm_write};
 use mach2::vm_prot::{vm_prot_t, VM_PROT_COPY, VM_PROT_EXECUTE, VM_PROT_READ, VM_PROT_WRITE};
 use mach2::vm_region::{vm_region_basic_info, VM_REGION_BASIC_INFO_64};
 use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t, vm_address_t, vm_offset_t, vm_size_t};
@@ -18,13 +18,14 @@ pub struct Patch {
     base_addr: vm_address_t,
     offset: vm_address_t,
     data: Vec<u8>,
+    pub pid: i32,
 }
 
 impl Patch {
-    pub fn from_name(name: &str) -> Option<Self>{
-        match Self::get_pid(name){
+    pub fn from_name(name: &str) -> Option<Self> {
+        match Self::get_pid(name) {
             None => None,
-            Some(pid) => Self::new(pid)
+            Some(pid) => Self::new(pid),
         }
     }
     pub fn new(pid: i32) -> Option<Self> {
@@ -39,6 +40,7 @@ impl Patch {
         };
         let mut own = Self {
             data: vec![],
+            pid,
             offset: 0,
             task,
             protection_addr: 0,
@@ -49,7 +51,7 @@ impl Patch {
         own.get_base_address();
         Some(own)
     }
-    fn get_pid(name: &str) -> Option<i32> {
+    pub fn get_pid(name: &str) -> Option<i32> {
         use sysinfo::System;
         // Please note that we use "new_all" to ensure that all lists of
         // CPUs and processes are filled!
@@ -78,6 +80,37 @@ impl Patch {
         self.do_write();
         self.restore_protection();
         self.resuming();
+    }
+    pub fn read_u64(&mut self, addr: u64, data: &mut u64) -> bool {
+        let buffer: [u8; 8] = [0; 8];
+        let mut buffer = buffer.to_vec();
+        let res = self.read(addr, &mut buffer, 8);
+        if res {
+            let bytes = &buffer[..8]; // 只取前 8 个字节
+            *data = u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]);
+        }
+        res
+    }
+    pub fn read(&mut self, addr: u64, data: &mut Vec<u8>, size: usize) -> bool {
+        let mut outsize: mach_vm_size_t = 0;
+        let result = unsafe {
+            mach_vm_read_overwrite(
+                self.task,
+                addr as mach_vm_address_t,
+                size as mach_vm_size_t,
+                data.as_mut_ptr() as mach_vm_address_t,
+                &mut outsize,
+            )
+        };
+        if result != KERN_SUCCESS {
+            eprintln!("无法读取内存: {:?}", result);
+            false
+        } else {
+            data.truncate(outsize as usize);
+            true
+        }
     }
     fn do_write(&mut self) {
         let data_ptr: *const u8 = self.data.as_ptr();
@@ -162,7 +195,7 @@ impl Patch {
             eprintln!("无法恢复目标任务: {:?}", result);
         }
     }
-    fn get_base_address(&mut self) -> Option<vm_address_t> {
+    pub fn get_base_address(&mut self) -> Option<vm_address_t> {
         unsafe {
             let mut address: vm_address_t = 0;
             let mut size: vm_size_t = 0;

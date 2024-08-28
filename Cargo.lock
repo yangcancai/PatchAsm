@@ -73,9 +73,7 @@ dependencies = [
 name = "patch-asm"
 version = "0.1.0"
 dependencies = [
- "mach2",
  "patch-core",
- "sysinfo",
 ]
 
 [[package]]
@@ -84,6 +82,13 @@ version = "0.1.0"
 dependencies = [
  "mach2",
  "sysinfo",
+]
+
+[[package]]
+name = "patch-foo"
+version = "0.1.0"
+dependencies = [
+ "patch-core",
 ]
 
 [[package]]
